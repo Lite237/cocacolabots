@@ -65,7 +65,7 @@ bot.start(async (ctx) => {
     const isAccountValid = await accountValid(ctx);
 
     if (!isAccountValid) {
-        await ctx.reply(lang[language_code].start(ctx), {
+        await ctx.reply(await lang[language_code].start(ctx), {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: "✅ S'inscrire", callback_data: `verify_${ctx.from.id}` }]

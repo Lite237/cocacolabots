@@ -1,5 +1,5 @@
 // import channels from "../config/channels.json" assert { type: 'json' };
-import prisma from "../config/prisma";
+import prisma from "../config/prisma.js";
 
 export async function accountValid(ctx) {
     // const channels = [-1002141908130];

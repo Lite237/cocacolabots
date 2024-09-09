@@ -17,6 +17,8 @@ const ENVIRONMENT = process.env.NODE_ENV || "";
 
 const bot = new Telegraf(BOT_TOKEN);
 
+const isAdmin = (id) => [1782278519, 6001638049].includes(id);
+
 bot.start(async (ctx) => {
     const startPayload = ctx.payload;
     const language_code = ctx.from?.language_code === "fr" ? "fr" : "en";
@@ -91,9 +93,24 @@ bot.start(async (ctx) => {
 
 });
 
-
 bot.command("channel", async (ctx) => {
     console.log(ctx.message.reply_to_message.forward_origin.chat.id)
+})
+
+bot.command("settings", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+
+    await ctx.reply("Beinvenue sur les parametres ⚙, confugurer votre bot comme vos le voulais 🤖\n\n<b>NB: This function is still in beta phase. Please report any errors to the bot <a href='https://t.me/lex_tech'>developer</a>.</b>", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "Main", callback_data: "settings_main" }, { text: "Tasks", callback_data: "settings_tasks" }]
+            ]
+        },
+        parse_mode: "HTML",
+        link_preview_options: {
+            is_disabled: true
+        }
+    });
 })
 
 bot.on(message("text"), async (ctx) => {
@@ -105,6 +122,139 @@ bot.on(message("text"), async (ctx) => {
             userId: ctx.from.id.toString()
         }
     })
+
+    const forwardedMessageChannelId = ctx.message?.forward_origin?.chat.id;
+    const forwardedMessageChannelName = ctx.message?.forward_origin?.chat.title;
+
+    if (text?.startsWith("https://t.me/") && isAdmin(ctx.from.id)) {
+        const channelAdd = await prisma.channels.findFirst({
+            where: {
+                processStatus: "0"
+            }
+        })
+
+        const taskAdd = await prisma.task.findFirst({
+            where: {
+                processStatus: "0"
+            }
+        })
+
+        if (channelAdd) {
+            await prisma.channels.update({
+                where: {
+                    processStatus: "0",
+                },
+                data: {
+                    link: text,
+                    processStatus: "1"
+                }
+            })
+        }
+
+        if (taskAdd) {
+            await prisma.task.update({
+                where: {
+                    processStatus: "0",
+                },
+                data: {
+                    link: text,
+                    processStatus: "1"
+                }
+            })
+        }
+
+
+        await ctx.reply("Transfert moi un message du canal a utilise\n\nNB: LE BOT DOIT ETRE ADMIN DU CANAL");
+    }
+
+    if (forwardedMessageChannelId && isAdmin(ctx.from.id)) {
+        await ctx.reply(forwardedMessageChannelId);
+
+        const channelAdd = await prisma.channels.findFirst({
+            where: {
+                processStatus: "1"
+            }
+        })
+
+        const taskAdd = await prisma.task.findFirst({
+            where: {
+                processStatus: "1"
+            }
+        })
+
+        try {
+            const botStatus = await ctx.telegram.getChatMember(forwardedMessageChannelId, ctx.botInfo.id);
+
+            if (botStatus.status !== "administrator" && !botStatus.can_invite_users) {
+                await ctx.reply("Verifier que le bot sois admins avec la permission d'ajoute des nouveau membre. Puis reessayer");
+
+                return;
+            }
+
+
+            if (channelAdd) {
+                await prisma.channels.update({
+                    where: {
+                        processStatus: "1"
+                    },
+                    data: {
+                        tgID: forwardedMessageChannelId.toString(),
+                        name: forwardedMessageChannelName.slice(0, 30) + "...",
+                        processStatus: "2"
+                    }
+                })
+
+            }
+
+            if (taskAdd) {
+                await prisma.task.update({
+                    where: {
+                        processStatus: "1"
+                    },
+                    data: {
+                        chatId: forwardedMessageChannelId.toString(),
+                        processStatus: "2"
+                    }
+                })
+            }
+
+            await ctx.reply("Plus qu'une dernier etape pour ajoute votre lien.Veillez repondre a la question\n\nVotre le lien est avec demande d'adhesion", {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: "Oui", callback_data: "link_yes" }, { text: "Non", callback_data: "link_no" }]
+                    ]
+                }
+            });
+
+            // if (state.state === "edit") {
+            //     await prisma.channels.update({
+            //         where: {
+            //             id: state.payload
+            //         },
+            //         data: {
+            //             link: createdLink.invite_link,
+            //             tgID: forwardedMessageChannelId.toString(),
+            //             name: forwardedMessageChannelName.slice(0, 10) + "...",
+            //             type: "main"
+            //         }
+            //     })
+
+            //     await ctx.reply("La tache a etait modifier");
+            // }
+
+
+
+        } catch (error) {
+            console.log(error)
+            await ctx.reply("Verifier que le bot sois admins et reessayer.\n\nSi le probleme persist contacte le dev.");
+            return;
+        }
+
+        // console.log(botStatus)
+
+
+        return
+    }
 
     if (text === "Bonus 🎁") {
         // Calculer la différence en millisecondes
@@ -541,6 +691,294 @@ bot.on("callback_query", async (ctx) => {
                 is_disabled: true
             }
         })
+    }
+
+    if (command === "edit") {
+        const channel = await prisma.channels.findUnique({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+        });
+
+        const message = `Nom: ${channel.name}\n\nLien: ${channel.link}\n\nType: ${channel.type === "main" ? "Canal obligatoire" : "Tache"}`
+
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Modifier", callback_data: `channelEdit_${channel.id}` }, { text: "Supprime", callback_data: `channelDelete_${channel.id}` }],
+                    [{ text: "🔙 Retour", callback_data: channel.type === "main" ? "back_main" : "back_tasks" }]
+                ]
+            },
+            link_preview_options: {
+                is_disabled: true
+            }
+        })
+    }
+
+    if (command === "editTask") {
+        const channel = await prisma.task.findUnique({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+        });
+
+        const message = `Lien: ${channel.link}\n\nType: ${channel?.type === "main" ? "Canal obligatoire" : "Tache"}`
+
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Modifier", callback_data: `channelEditTask_${channel.id}` }, { text: "Supprime", callback_data: `channelDeleteTask_${channel.id}` }],
+                    [{ text: "🔙 Retour", callback_data: channel.type === "main" ? "back_main" : "back_tasks" }]
+                ]
+            },
+            link_preview_options: {
+                is_disabled: true
+            }
+        })
+    }
+
+    if (command === "channelEdit") {
+
+        await prisma.channels.update({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+            data: {
+                processStatus: "0"
+            }
+        })
+
+        await ctx.reply("Envoie moi le lien du nouveau canal...");
+    }
+
+    if (command === "channelEditTask") {
+
+        await prisma.task.update({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+            data: {
+                processStatus: "0"
+            }
+        })
+
+        await ctx.reply("Envoie moi le lien du nouveau canal...");
+    }
+
+    if (command === "channelDelete") {
+        await prisma.channels.delete({
+            where: {
+                id: callback_data.split("_")[1]
+            }
+        })
+
+        await ctx.answerCbQuery("Le canal a etait supprime", {
+            show_alert: false
+        });
+    }
+
+    if (command === "channelDeleteTask") {
+        console.log(callback_data.split("_")[1])
+        await prisma.task.delete({
+            where: {
+                id: callback_data.split("_")[1]
+            }
+        })
+
+        await ctx.answerCbQuery("Le canal a etait supprime", {
+            show_alert: false
+        });
+    }
+
+    if (callback_data === "settings_main" || callback_data === "back_main") {
+        const CHANNELS = await prisma.channels.findMany({
+            where: {
+                type: "main"
+            },
+            select: {
+                name: true,
+                id: true
+            }
+        });
+
+        const message = "Les canaux abligatoire";
+
+        const keyboard = CHANNELS.map(channel => ([{
+            text: channel.name,
+            callback_data: `edit_${channel.id}`
+        }]))
+
+        console.log(keyboard)
+
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    ...keyboard,
+                    [{ text: "Ajoute un canal", callback_data: "settings_add_main" }],
+                    [{ text: "🔙 Retour", callback_data: "back_settings" }]
+                ]
+            }
+        })
+    }
+
+    if (callback_data === "settings_tasks" || callback_data === "back_tasks") {
+        const CHANNELS = await prisma.task.findMany();
+
+        const message = "Vos taches !!";
+
+        const keyboard = CHANNELS.map(channel => ([{
+            text: channel.link,
+            callback_data: `editTask_${channel.id}`
+        }]))
+
+        console.log(keyboard)
+
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    ...keyboard,
+                    [{ text: "Ajoute une tache", callback_data: "settings_add_task" }],
+                    [{ text: "🔙 Retour", callback_data: "back_settings" }]
+                ]
+            }
+        })
+    }
+
+    if (callback_data === "settings_add_main") {
+        await prisma.channels.create({
+            data: {
+                processStatus: "0",
+                type: "main",
+            }
+        })
+
+        await ctx.reply("Envoie moi le lien du canal a ajoute");
+    }
+
+    if (callback_data === "settings_add_task") {
+        await prisma.task.create({
+            data: {
+                id: "TK0000",
+                processStatus: "0"
+            }
+        })
+
+        await ctx.reply("Envoie moi le lien du canal a ajoute");
+    }
+
+    if (callback_data === "back_settings") {
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, "Beinvenue sur les parametres ⚙, confugurer votre bot comme vos le voulais 🤖", {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Main", callback_data: "settings_main" }, { text: "Tasks", callback_data: "settings_tasks" }]
+                ]
+            }
+        });
+    }
+
+    if (callback_data === "link_yes") {
+        const channelAdd = await prisma.channels.findFirst({
+            where: {
+                processStatus: "2"
+            }
+        })
+
+        const taskAdd = await prisma.task.findFirst({
+            where: {
+                processStatus: "2"
+            }
+        })
+
+        if (channelAdd) {
+            await prisma.channels.update({
+                where: {
+                    processStatus: "2"
+                },
+                data: {
+                    joinRequest: true,
+                    processStatus: uuid()
+                }
+            })
+        }
+
+        if (taskAdd) {
+            const lastAddedJoinTaskId = await prisma.task.count({
+                where: {
+                    id: {
+                        contains: "11"
+                    }
+                }
+            })
+
+            const lastAddedTaskId = await prisma.task.count();
+
+            await prisma.task.update({
+                where: {
+                    processStatus: "2"
+                },
+                data: {
+                    joinRequest: true,
+                    reward: 1500,
+                    id: taskAdd.id === "TK0000" ? `TK11${lastAddedJoinTaskId + 1}` : taskAdd.id,
+                    priority: lastAddedTaskId + 1,
+                    processStatus: uuid()
+                }
+            })
+        }
+        await ctx.reply("Lien ajoute");
+    }
+
+    if (callback_data === "link_no") {
+        const channelAdd = await prisma.channels.findFirst({
+            where: {
+                processStatus: "2"
+            }
+        })
+
+        const taskAdd = await prisma.task.findFirst({
+            where: {
+                processStatus: "2"
+            }
+        })
+
+        if (channelAdd) {
+            await prisma.channels.update({
+                where: {
+                    processStatus: "2"
+                },
+                data: {
+                    joinRequest: false,
+                    processStatus: uuid()
+                }
+            })
+        }
+
+        if (taskAdd) {
+            const lastAddedJoinTaskId = await prisma.task.count({
+                where: {
+                    id: {
+                        contains: "22"
+                    }
+                }
+            })
+
+            const lastAddedTaskId = await prisma.task.count();
+
+            await prisma.task.update({
+                where: {
+                    processStatus: "2"
+                },
+                data: {
+                    joinRequest: false,
+                    reward: 1500,
+                    id: taskAdd.id === "TK0000" ? `TK22${lastAddedJoinTaskId + 1}` : taskAdd.id,
+                    priority: lastAddedTaskId + 1,
+                    processStatus: uuid()
+                }
+            })
+        }
+
+        await ctx.reply("Lien ajoute");
     }
 
 });

@@ -9,6 +9,7 @@ import { accountValid } from "./utils/checkVerify.js";
 import { development, production } from "./core/index.js";
 import prisma from "./config/prisma.js"
 import keyboard from "./config/keyboard.js";
+import { v4 as uuid } from "uuid"
 
 dotenv.config();
 

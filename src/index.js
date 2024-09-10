@@ -72,7 +72,10 @@ bot.start(async (ctx) => {
                     [{ text: "✅ S'inscrire", callback_data: `verify_${ctx.from.id}` }]
                 ]
             },
-            parse_mode: "HTML"
+            parse_mode: "HTML",
+            link_preview_options: {
+                is_disabled: true
+            }
         });
 
         return;

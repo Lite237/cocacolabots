@@ -659,6 +659,159 @@ bot.on("callback_query", async (ctx) => {
 
     const language_code = ctx.from?.language_code === "fr" ? "fr" : "en";
 
+    if (command === "verify") {
+        const isAccountValid = await accountValid(ctx);
+
+        if (!isAccountValid) {
+            await ctx.reply(lang[language_code].invalid);
+            return;
+        }
+
+
+        await ctx.reply(lang[language_code].welcome, {
+            reply_markup: {
+                keyboard: keyboard[language_code].main,
+                resize_keyboard: true
+            }
+        });
+
+    }
+
+    if (command === "addNum") {
+        await ctx.reply(lang[language_code].getNum);
+
+        await prisma.user.update({
+            where: {
+                userId: ctx.from.id.toString()
+            },
+            data: {
+                status: "AddingNum"
+            }
+        })
+    }
+
+    if (command === "task") {
+        const completedTasksId = [];
+        const uncompletedTasksId = [];
+        const availableTasks = [];
+
+        for (const payload of callback_data.split("_").slice(1)) {
+            const task = await prisma.task.findUnique({
+                where: {
+                    id: payload
+                }
+            })
+
+            if (!task) {
+                await ctx.reply("Une erreur s’est produite, veuillez réessayer demain.");
+                await ctx.deleteMessage();
+
+                return;
+            }
+
+            availableTasks.push(task);
+
+            let done = false;
+
+            if (payload.slice(2, 4) == "11") {
+                done = await prisma.userTasks.findFirst({
+                    where: {
+                        userId: ctx.from.id.toString(),
+                        taskId: payload
+                    }
+                })
+
+                if (!done) {
+                    const user = await ctx.telegram.getChatMember(task.chatId, ctx.from.id);
+                    done = !(user.status === "left" || user.status === "kicked");
+
+                    if (done) {
+                        await prisma.userTasks.create({
+                            data: {
+                                userId: ctx.from.id.toString(),
+                                taskId: payload
+                            }
+                        })
+                    }
+                }
+            }
+
+            if (payload.slice(2, 4) == "22") {
+                const user = await ctx.telegram.getChatMember(task.chatId, ctx.from.id);
+                done = !(user.status === "left" || user.status === "kicked");
+
+                if (done) {
+                    await prisma.userTasks.create({
+                        data: {
+                            userId: ctx.from.id.toString(),
+                            taskId: payload
+                        }
+                    })
+                }
+            }
+
+            if (done) {
+                completedTasksId.push(task.id);
+
+                await prisma.user.update({
+                    where: {
+                        userId: ctx.from.id.toString()
+                    },
+                    data: {
+                        amount: {
+                            increment: task.reward
+                        }
+                    }
+                })
+            } else {
+                uncompletedTasksId.push(task.id)
+            }
+        }
+
+        await prisma.user.update({
+            where: {
+                userId: ctx.from.id.toString(),
+            },
+            data: {
+                taskIds: uncompletedTasksId.join("|"),
+            }
+        })
+
+        if (completedTasksId.length === 0) {
+            await ctx.answerCbQuery(lang[language_code].taskAlert)
+
+            return;
+        }
+
+        if (completedTasksId.length === callback_data.split("_").slice(1).length) {
+            await ctx.deleteMessage();
+
+            await ctx.reply(lang[language_code].taskDone)
+
+            return;
+        }
+
+        const displayTasks = availableTasks.filter((task) => !completedTasksId.includes(task.id)).reduce((curVal, task) => {
+            return curVal + `\n\n👉 ${task.link}\n💸 Gains: ${task.reward} FCFA`
+        }, "")
+
+        const command = uncompletedTasksId.reduce((curVal, taskId) => {
+            return curVal + `_${taskId}`
+        }, "task")
+
+        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, `${lang[language_code].taskMain}: ${displayTasks}\n\n${language_code === "fr" ? "Terminé" : "Done"}: ${completedTasksId.length}/2`, {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "✅ Check", callback_data: command }]
+                ]
+            },
+            link_preview_options: {
+                is_disabled: true
+            }
+        })
+    }
+
+
     if (command === "edit") {
         const channel = await prisma.channels.findUnique({
             where: {

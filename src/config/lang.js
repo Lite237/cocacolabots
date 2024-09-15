@@ -3,7 +3,10 @@ import prisma from "./prisma.js";
 async function getLinks() {
     const CHANNELS = await prisma.channels.findMany({
         where: {
-            type: "main"
+            type: "main",
+            processStatus: {
+                notIn: ["0", "1", "2"]
+            }
         },
         select: {
             link: true
@@ -12,6 +15,7 @@ async function getLinks() {
 
     return CHANNELS.reduce((prev, channel) => prev + `👉 ${channel.link}\n\n`, "");
 }
+
 const lang = {
     en: {
         welcome: "Congratulations! Your account is all set! 🎉\n\nFind out how to boost your earnings by clicking on '📋 Procedure 📋' under.💸",

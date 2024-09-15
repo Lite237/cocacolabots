@@ -20,7 +20,111 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const isAdmin = (id) => [1782278519, 6001638049].includes(id);
 
+const updateMainBoard = async (ctx) => {
+    const CHANNELS = await prisma.channels.findMany({
+        where: {
+            type: "main",
+            processStatus: {
+                notIn: ["0", "1", "2"]
+            }
+        },
+        select: {
+            name: true,
+            id: true,
+            withdrawalChannel: true
+        }
+    });
+
+    const message = "Les canaux abligatoire";
+
+    const keyboard = CHANNELS.map(channel => ([{
+        text: `${channel.name}${channel.withdrawalChannel ? "🤑" : ""}`,
+        callback_data: `edit_${channel.id}`
+    }]))
+
+    await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+        reply_markup: {
+            inline_keyboard: [
+                ...keyboard,
+                [{ text: "Ajoute un canal", callback_data: "settings_add_main" }],
+                [{ text: "🔙 Retour", callback_data: "back_settings" }]
+            ]
+        }
+    })
+}
+
+const updateTaskBoard = async (ctx) => {
+    const CHANNELS = await prisma.task.findMany({
+        where: {
+            processStatus: {
+                notIn: ["0", "1", "2"]
+            }
+        }
+    });
+
+    const message = "Vos taches !!";
+
+    const keyboard = CHANNELS.map(channel => ([{
+        text: channel.link,
+        callback_data: `editTask_${channel.id}`
+    }]))
+
+    console.log(keyboard)
+
+    await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
+        reply_markup: {
+            inline_keyboard: [
+                ...keyboard,
+                [{ text: "Ajoute une tache", callback_data: "settings_add_task" }],
+                [{ text: "🔙 Retour", callback_data: "back_settings" }]
+            ]
+        }
+    })
+}
+
+const cancelMain = async () => {
+    const isCreating = await prisma.channels.findFirst({
+        where: {
+            processStatus: {
+                in: ["0", "1", "2"]
+            }
+        }
+    })
+
+    if (isCreating) {
+        await prisma.channels.delete({
+            where: {
+                id: isCreating.id
+            }
+        })
+    }
+
+    return Boolean(isCreating);
+}
+
+const cancelTask = async () => {
+    const isCreating = await prisma.task.findFirst({
+        where: {
+            processStatus: {
+                in: ["0", "1", "2"]
+            }
+        }
+    })
+
+    if (isCreating) {
+        await prisma.task.delete({
+            where: {
+                id: isCreating.id
+            }
+        })
+    }
+
+    return Boolean(isCreating);
+}
+
 bot.start(async (ctx) => {
+    const welcomeMsg = await ctx.reply("Veuillez patienter… ⏳😊");
+
     const startPayload = ctx.payload;
     const language_code = ctx.from?.language_code === "fr" ? "fr" : "en";
 
@@ -66,18 +170,19 @@ bot.start(async (ctx) => {
     const isAccountValid = await accountValid(ctx);
 
     if (!isAccountValid) {
-        await ctx.reply(await lang[language_code].start(ctx), {
+        const starterText = await lang[language_code].start(ctx);
+
+        await ctx.telegram.editMessageText(ctx.chat.id, welcomeMsg.message_id, undefined, starterText, {
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: "✅ S'inscrire", callback_data: `verify_${ctx.from.id}` }]
+                    [{ text: "✅ Vérifiez", callback_data: `verify_${ctx.from.id}` }]
                 ]
             },
             parse_mode: "HTML",
             link_preview_options: {
                 is_disabled: true
             }
-        });
-
+        })
         return;
     }
 
@@ -93,6 +198,9 @@ bot.start(async (ctx) => {
                 resize_keyboard: true
             }
         });
+
+        await ctx.deleteMessage(welcomeMsg.message_id)
+
     }
 
 });
@@ -117,7 +225,7 @@ bot.command("settings", async (ctx) => {
     });
 })
 
-bot.on(message("text"), async (ctx) => {
+bot.on("message", async (ctx) => {
     const text = ctx.message.text;
     const language_code = ctx.from?.language_code === "fr" ? "fr" : "en";
 
@@ -127,74 +235,62 @@ bot.on(message("text"), async (ctx) => {
         }
     })
 
-    const forwardedMessageChannelId = ctx.message?.forward_origin?.chat.id;
-    const forwardedMessageChannelName = ctx.message?.forward_origin?.chat.title;
+    if (isAdmin(ctx.from.id)) {
+        const forwardedMessageChannelId = ctx.message?.forward_origin?.chat?.id;
+        const forwardedMessageChannelName = ctx.message?.forward_origin?.chat?.title;
 
-    if (text?.startsWith("https://t.me/") && isAdmin(ctx.from.id)) {
-        const channelAdd = await prisma.channels.findFirst({
-            where: {
-                processStatus: "0"
-            }
-        })
-
-        const taskAdd = await prisma.task.findFirst({
-            where: {
-                processStatus: "0"
-            }
-        })
-
-        if (channelAdd) {
-            await prisma.channels.update({
+        if (text?.startsWith("https://t.me/")) {
+            const channelAdd = await prisma.channels.findFirst({
                 where: {
-                    processStatus: "0",
-                },
-                data: {
-                    link: text,
+                    processStatus: "0"
+                }
+            })
+
+            const taskAdd = await prisma.task.findFirst({
+                where: {
+                    processStatus: "0"
+                }
+            })
+
+            if (channelAdd) {
+                await prisma.channels.update({
+                    where: {
+                        processStatus: "0",
+                    },
+                    data: {
+                        link: text,
+                        processStatus: "1"
+                    }
+                })
+            }
+
+            if (taskAdd) {
+                await prisma.task.update({
+                    where: {
+                        processStatus: "0",
+                    },
+                    data: {
+                        link: text,
+                        processStatus: "1"
+                    }
+                })
+            }
+
+            await ctx.reply("Transfert moi un message du canal a utilise");
+        }
+
+        if (forwardedMessageChannelId) {
+            const channelAdd = await prisma.channels.findFirst({
+                where: {
                     processStatus: "1"
                 }
             })
-        }
 
-        if (taskAdd) {
-            await prisma.task.update({
+            const taskAdd = await prisma.task.findFirst({
                 where: {
-                    processStatus: "0",
-                },
-                data: {
-                    link: text,
                     processStatus: "1"
                 }
             })
-        }
-
-
-        await ctx.reply("Transfert moi un message du canal a utilise\n\nNB: LE BOT DOIT ETRE ADMIN DU CANAL");
-    }
-
-    if (forwardedMessageChannelId && isAdmin(ctx.from.id)) {
-        await ctx.reply(forwardedMessageChannelId);
-
-        const channelAdd = await prisma.channels.findFirst({
-            where: {
-                processStatus: "1"
-            }
-        })
-
-        const taskAdd = await prisma.task.findFirst({
-            where: {
-                processStatus: "1"
-            }
-        })
-
-        try {
-            const botStatus = await ctx.telegram.getChatMember(forwardedMessageChannelId, ctx.botInfo.id);
-
-            if (botStatus.status !== "administrator" && !botStatus.can_invite_users) {
-                await ctx.reply("Verifier que le bot sois admins avec la permission d'ajoute des nouveau membre. Puis reessayer");
-
-                return;
-            }
-
 
             if (channelAdd) {
                 await prisma.channels.update({
@@ -208,6 +304,15 @@ bot.on(message("text"), async (ctx) => {
                     }
                 })
 
+                await ctx.reply("Do you want to force channel", {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: "Yes", callback_data: "forced_yes" }, { text: "No", callback_data: "forced_no" }]
+                        ]
+                    }
+                })
+
+                return;
             }
 
             if (taskAdd) {
@@ -230,35 +335,10 @@ bot.on(message("text"), async (ctx) => {
                 }
             });
 
-            // if (state.state === "edit") {
-            //     await prisma.channels.update({
-            //         where: {
-            //             id: state.payload
-            //         },
-            //         data: {
-            //             link: createdLink.invite_link,
-            //             tgID: forwardedMessageChannelId.toString(),
-            //             name: forwardedMessageChannelName.slice(0, 10) + "...",
-            //             type: "main"
-            //         }
-            //     })
-
-            //     await ctx.reply("La tache a etait modifier");
-            // }
-
-
-
-        } catch (error) {
-            console.log(error)
-            await ctx.reply("Verifier que le bot sois admins et reessayer.\n\nSi le probleme persist contacte le dev.");
             return;
         }
-
-        // console.log(botStatus)
-
-
-        return
     }
+
 
     if (text === "Bonus 🎁") {
         // Calculer la différence en millisecondes
@@ -415,7 +495,7 @@ bot.on(message("text"), async (ctx) => {
 
         const completedTasksId = completedTasks.map((task) => task.taskId)
 
-        const availableTasks = await prisma.task.findMany({
+        const availableTasks = (await prisma.task.findMany({
             where: {
                 NOT: {
                     id: {
@@ -427,7 +507,7 @@ bot.on(message("text"), async (ctx) => {
                 priority: "desc"
             },
             take: 2
-        })
+        })).filter(task => (!["0", "1", "2"].includes(task.processStatus)))
 
 
         const displayTasks = availableTasks.reduce((curVal, task) => {
@@ -525,10 +605,21 @@ bot.on(message("text"), async (ctx) => {
         ];
         const randomNumber = Math.floor(Math.random() * 4);
 
-        const message = await ctx.telegram.sendMessage("-1002240388356", `⚔ NOUVEAU RETRAIT ⚔\n\n▪️ Status : Approuvé ✅\n▪️ User Identifiant: ${ctx.from.id}\n▪️ Retrait effectué par: ${user.userName}\n▪️ Montant Retiré : ${withdrawAmount} FCFA\n\n🤴 Bot @${ctx.botInfo.username}`, {
+        const withdrawalChannel = await prisma.channels.findFirst({
+            where: {
+                withdrawalChannel: true
+            },
+            select: {
+                tgID: true
+            }
+        })
+
+        if (!withdrawalChannel) return;
+
+        const message = await ctx.telegram.sendMessage(withdrawalChannel?.tgID, `⚔ NOUVEAU RETRAIT ⚔\n\n▪️ Status : Approuvé ✅\n▪️ User Identifiant: ${ctx.from.id}\n▪️ Retrait effectué par: ${user.userName}\n▪️ Montant Retiré : ${withdrawAmount} FCFA\n\n🤴 Bot @${ctx.botInfo.username}`, {
             disable_notification: true
         });
-        await ctx.telegram.setMessageReaction("-1002240388356", message.message_id, [REACTIONS[randomNumber]])
+        await ctx.telegram.setMessageReaction(withdrawalChannel?.tgID, message.message_id, [REACTIONS[randomNumber]])
     }
 
 })
@@ -568,135 +659,6 @@ bot.on("callback_query", async (ctx) => {
 
     const language_code = ctx.from?.language_code === "fr" ? "fr" : "en";
 
-    if (command === "verify") {
-        const isAccountValid = await accountValid(ctx);
-
-        if (!isAccountValid) {
-            await ctx.reply(lang[language_code].invalid);
-            return;
-        }
-
-
-        await ctx.reply(lang[language_code].welcome, {
-            reply_markup: {
-                keyboard: keyboard[language_code].main,
-                resize_keyboard: true
-            }
-        });
-
-    }
-
-    if (command === "addNum") {
-        await ctx.reply(lang[language_code].getNum);
-
-        await prisma.user.update({
-            where: {
-                userId: ctx.from.id.toString()
-            },
-            data: {
-                status: "AddingNum"
-            }
-        })
-    }
-
-    if (command === "task") {
-        const completedTasksId = [];
-        const uncompletedTasksId = [];
-        const availableTasks = [];
-
-        for (const payload of callback_data.split("_").slice(1)) {
-            const task = await prisma.task.findUnique({
-                where: {
-                    id: payload
-                }
-            })
-
-            if (!task) {
-                await ctx.deleteMessage();
-                await ctx.reply("Une erreur c'est produite");
-
-                return;
-            }
-
-            availableTasks.push(task);
-
-            let done = false;
-
-            if (payload.slice(2, 4) == "11") {
-                done = await prisma.userTasks.findFirst({
-                    where: {
-                        userId: ctx.from.id.toString(),
-                        taskId: payload
-                    }
-                })
-            }
-
-            if (payload.slice(2, 4) == "22") {
-                const user = await ctx.telegram.getChatMember(task.chatId, ctx.from.id);
-                done = !(user.status === "left" || user.status === "kicked");
-                if (done) {
-                    await prisma.userTasks.create({
-                        data: {
-                            userId: ctx.from.id.toString(),
-                            taskId: payload
-                        }
-                    })
-                }
-            }
-
-            if (done) {
-                completedTasksId.push(task.id);
-
-                await prisma.user.update({
-                    where: {
-                        userId: ctx.from.id.toString()
-                    },
-                    data: {
-                        amount: {
-                            increment: task.reward
-                        }
-                    }
-                })
-            } else {
-                uncompletedTasksId.push(task.id)
-            }
-        }
-
-
-        if (completedTasksId.length === 0) {
-            await ctx.answerCbQuery(lang[language_code].taskAlert)
-
-            return;
-        }
-
-        if (completedTasksId.length === callback_data.split("_").slice(1).length) {
-            await ctx.deleteMessage();
-
-            await ctx.reply(lang[language_code].taskDone)
-
-            return;
-        }
-
-        const displayTasks = availableTasks.filter((task) => !completedTasksId.includes(task.id)).reduce((curVal, task) => {
-            return curVal + `\n\n👉 ${task.link}\n💸 Gains: ${task.reward} FCFA`
-        }, "")
-
-        const command = uncompletedTasksId.reduce((curVal, taskId) => {
-            return curVal + `_${taskId}`
-        }, "task")
-
-        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, `${lang[language_code].taskMain}: ${displayTasks}\n\n${language_code === "fr" ? "Terminé" : "Done"}: ${completedTasksId.length}/2`, {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "✅ Check", callback_data: command }]
-                ]
-            },
-            link_preview_options: {
-                is_disabled: true
-            }
-        })
-    }
-
     if (command === "edit") {
         const channel = await prisma.channels.findUnique({
             where: {
@@ -710,6 +672,7 @@ bot.on("callback_query", async (ctx) => {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: "Modifier", callback_data: `channelEdit_${channel.id}` }, { text: "Supprime", callback_data: `channelDelete_${channel.id}` }],
+                    [{ text: "Canal De Retrait", callback_data: `change_${channel.id}` }],
                     [{ text: "🔙 Retour", callback_data: channel.type === "main" ? "back_main" : "back_tasks" }]
                 ]
             },
@@ -779,6 +742,8 @@ bot.on("callback_query", async (ctx) => {
         await ctx.answerCbQuery("Le canal a etait supprime", {
             show_alert: false
         });
+
+        await updateMainBoard(ctx);
     }
 
     if (command === "channelDeleteTask") {
@@ -792,63 +757,21 @@ bot.on("callback_query", async (ctx) => {
         await ctx.answerCbQuery("Le canal a etait supprime", {
             show_alert: false
         });
+
+        await updateTaskBoard(ctx);
     }
 
     if (callback_data === "settings_main" || callback_data === "back_main") {
-        const CHANNELS = await prisma.channels.findMany({
-            where: {
-                type: "main"
-            },
-            select: {
-                name: true,
-                id: true
-            }
-        });
-
-        const message = "Les canaux abligatoire";
-
-        const keyboard = CHANNELS.map(channel => ([{
-            text: channel.name,
-            callback_data: `edit_${channel.id}`
-        }]))
-
-        console.log(keyboard)
-
-        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
-            reply_markup: {
-                inline_keyboard: [
-                    ...keyboard,
-                    [{ text: "Ajoute un canal", callback_data: "settings_add_main" }],
-                    [{ text: "🔙 Retour", callback_data: "back_settings" }]
-                ]
-            }
-        })
+        await updateMainBoard(ctx);
     }
 
     if (callback_data === "settings_tasks" || callback_data === "back_tasks") {
-        const CHANNELS = await prisma.task.findMany();
-
-        const message = "Vos taches !!";
-
-        const keyboard = CHANNELS.map(channel => ([{
-            text: channel.link,
-            callback_data: `editTask_${channel.id}`
-        }]))
-
-        console.log(keyboard)
-
-        await ctx.telegram.editMessageText(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, message, {
-            reply_markup: {
-                inline_keyboard: [
-                    ...keyboard,
-                    [{ text: "Ajoute une tache", callback_data: "settings_add_task" }],
-                    [{ text: "🔙 Retour", callback_data: "back_settings" }]
-                ]
-            }
-        })
+        await updateTaskBoard(ctx);
     }
 
     if (callback_data === "settings_add_main") {
+        await cancelMain();
+
         await prisma.channels.create({
             data: {
                 processStatus: "0",
@@ -860,6 +783,8 @@ bot.on("callback_query", async (ctx) => {
     }
 
     if (callback_data === "settings_add_task") {
+        await cancelTask();
+
         await prisma.task.create({
             data: {
                 id: "TK0000",
@@ -880,7 +805,7 @@ bot.on("callback_query", async (ctx) => {
         });
     }
 
-    if (callback_data === "link_yes") {
+    if (callback_data === "link_yes" || callback_data === "forced_no") {
         const channelAdd = await prisma.channels.findFirst({
             where: {
                 processStatus: "2"
@@ -923,16 +848,21 @@ bot.on("callback_query", async (ctx) => {
                 data: {
                     joinRequest: true,
                     reward: 1500,
-                    id: taskAdd.id === "TK0000" ? `TK11${lastAddedJoinTaskId + 1}` : taskAdd.id,
-                    priority: lastAddedTaskId + 1,
+                    id: taskAdd.id === "TK0000" ? `TK11${lastAddedJoinTaskId + 1}` : taskAdd.id.includes("22") ? `TK11${lastAddedJoinTaskId + 1}` : taskAdd.id,
+                    priority: taskAdd.id === "TK0000" ? lastAddedTaskId - 1 : taskAdd.priority,
                     processStatus: uuid()
                 }
             })
         }
-        await ctx.reply("Lien ajoute");
+
+        await ctx.editMessageReplyMarkup({
+            inline_keyboard: []
+        })
+
+        await ctx.reply("Nice !!");
     }
 
-    if (callback_data === "link_no") {
+    if (callback_data === "link_no" || callback_data === "forced_yes") {
         const channelAdd = await prisma.channels.findFirst({
             where: {
                 processStatus: "2"
@@ -946,6 +876,21 @@ bot.on("callback_query", async (ctx) => {
         })
 
         if (channelAdd) {
+            try {
+                const botStatus = await ctx.telegram.getChatMember(channelAdd.tgID, ctx.botInfo.id);
+
+                if (botStatus.status !== "administrator" && !botStatus.can_invite_users) {
+                    await ctx.reply("Verifier que le bot sois admins avec la permission d'ajoute des nouveau membre. Puis reessayer");
+
+                    return;
+                }
+            } catch (error) {
+                console.log(error)
+                await ctx.reply("Verifier que le bot sois admins et reessayer.\n\nSi le probleme persist contacte le dev.");
+                return;
+            }
+
+
             await prisma.channels.update({
                 where: {
                     processStatus: "2"
@@ -966,6 +911,8 @@ bot.on("callback_query", async (ctx) => {
                 }
             })
 
+            console.log(lastAddedJoinTaskId)
+
             const lastAddedTaskId = await prisma.task.count();
 
             await prisma.task.update({
@@ -975,14 +922,90 @@ bot.on("callback_query", async (ctx) => {
                 data: {
                     joinRequest: false,
                     reward: 1500,
-                    id: taskAdd.id === "TK0000" ? `TK22${lastAddedJoinTaskId + 1}` : taskAdd.id,
-                    priority: lastAddedTaskId + 1,
+                    id: taskAdd.id === "TK0000" ? `TK22${lastAddedJoinTaskId + 1}` : taskAdd.id.includes("11") ? `TK22${lastAddedJoinTaskId + 1}` : taskAdd.id,
+                    priority: taskAdd.id === "TK0000" ? lastAddedTaskId - 1 : taskAdd.priority,
                     processStatus: uuid()
                 }
             })
         }
 
-        await ctx.reply("Lien ajoute");
+        await ctx.editMessageReplyMarkup({
+            inline_keyboard: []
+        })
+
+        await ctx.reply("Nice !!");
+    }
+
+    if (command === "change") {
+        const withdrawChannel = await prisma.channels.findFirst({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+            select: {
+                name: true,
+                link: true,
+                id: true
+            }
+        })
+
+        await ctx.reply(`By clicking Continue the withdrawal channel will be change to:\n\n👉 <a href="${withdrawChannel?.link}">${withdrawChannel?.name}</a>`, {
+            parse_mode: "HTML",
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "Continue", callback_data: `continue_${withdrawChannel?.id}` }, { text: "Cancel", callback_data: "cancel" }]
+                ]
+            },
+            link_preview_options: {
+                is_disabled: true
+            }
+        })
+    }
+
+    if (command === "continue") {
+        const oldWithDrawChannel = await prisma.channels.findFirst({
+            where: {
+                withdrawalChannel: true
+            },
+            select: {
+                id: true
+            }
+        })
+
+
+        await prisma.channels.update({
+            where: {
+                id: callback_data.split("_")[1]
+            },
+            data: {
+                withdrawalChannel: true
+            }
+        });
+
+        oldWithDrawChannel?.id && await prisma.channels.update({
+            where: {
+                id: oldWithDrawChannel.id
+            },
+            data: {
+                withdrawalChannel: false
+            }
+        });
+
+        await ctx.editMessageReplyMarkup({
+            inline_keyboard: []
+        })
+
+        await ctx.reply("Withdrawal channel change...");
+    }
+
+    if (callback_data === "cancel") {
+        await ctx.editMessageReplyMarkup({
+            inline_keyboard: []
+        })
+
+        await ctx.answerCbQuery("WTF !! Don't disturb...", {
+            show_alert: true,
+            cache_time: 1000
+        })
     }
 
 });

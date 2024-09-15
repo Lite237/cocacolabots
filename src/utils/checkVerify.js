@@ -1,12 +1,15 @@
 // import channels from "../config/channels.json" assert { type: 'json' };
+
 import prisma from "../config/prisma.js";
 
 export async function accountValid(ctx) {
-    // const channels = [-1002141908130];
     const CHANNELS = await prisma.channels.findMany({
         where: {
             type: "main",
-            joinRequest: false
+            joinRequest: false,
+            processStatus: {
+                notIn: ["0", "1", "2"]
+            }
         },
         select: {
             tgID: true

@@ -38,7 +38,7 @@ model Task {
   reward      Int     @default(0)
   joinRequest Boolean @default(false)
 
-  processStatus String @unique @default("0")
+  processStatus String @unique @default(cuid())
 }
 
 model UserTasks {
@@ -51,11 +51,12 @@ model UserTasks {
 model Channels {
   id String @id @default(cuid())
 
-  tgID        String  @default("")
-  name        String  @default("Test")
-  link        String  @default("")
-  type        String  @default("main")
-  joinRequest Boolean @default(false)
+  tgID              String  @default("")
+  name              String  @default("Test")
+  link              String  @default("")
+  type              String  @default("main")
+  joinRequest       Boolean @default(false)
+  withdrawalChannel Boolean @default(false)
 
-  processStatus String @unique @default("0")
+  processStatus String @unique @default(cuid())
 }

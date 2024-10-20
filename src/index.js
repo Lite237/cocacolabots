@@ -199,7 +199,7 @@ bot.start(async (ctx) => {
         });
     }
 
-    const isAccountValid = accountValid(ctx);
+    const isAccountValid = false;
 
     if (!isAccountValid) {
         const starterText = await lang[language_code].start(ctx);
